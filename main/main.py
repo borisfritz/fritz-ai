@@ -1,39 +1,15 @@
 import os
 import sys
 import argparse
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from enum import IntEnum
+
+from status import Status
+from debug import check_status, debug_status
 
 load_dotenv()
-
-class Status(IntEnum):
-    OK = 0
-    NO_PROMPT = 1
-    INVALID_RESPONSE = 2
-
-# Decorator: Exit automatically if status is not OK
-def check_status(func):
-    def wrapper(*args, **kwargs):
-        status, result = func(*args, **kwargs)
-        if status != Status.OK:
-            print(f"Error: {status.name}")
-            sys.exit(status.value)
-        return result
-    return wrapper
-
-# Decorator: Optional debug printing
-def debug_status(func):
-    def wrapper(self, *args, **kwargs):
-        if getattr(self, "debug", False):
-            print(f"[DEBUG] Calling {func.__name__} with args={args}, kwargs={kwargs}")
-        result = func(self, *args, **kwargs)
-        if getattr(self, "debug", False):
-            print(f"[DEBUG] {func.__name__} returned: {result}")
-            print("------------")
-        return result
-    return wrapper
 
 class GeminiCLI:
     def __init__(self):
@@ -54,8 +30,6 @@ class GeminiCLI:
         args = parser.parse_args(argv)
 
         prompt = " ".join(args.prompt)
-        #if not (prompt.startswith('"') and prompt.endswith('"')):
-            #return Status.NO_PROMPT, None
 
         self.prompt = prompt
         self.flags = {"verbose": args.verbose, "debug": args.debug}
