@@ -1,6 +1,5 @@
 import os
 import sys
-import argparse
 
 from dotenv import load_dotenv
 from google import genai
@@ -8,6 +7,7 @@ from google.genai import types
 
 from status import Status
 from debug import check_status, debug_status
+from utils import parse_cli_args
 
 load_dotenv()
 
@@ -22,18 +22,10 @@ class GeminiCLI:
     @check_status
     @debug_status
     def parse_args(self, argv):
-        parser = argparse.ArgumentParser(description="Generate content using Gemini API")
-        parser.add_argument("prompt", type=str, nargs='+', help="Prompt to send to the model (required)")
-        parser.add_argument("--verbose", action="store_true", help="Print token usage information")
-        parser.add_argument("--debug", action="store_true", help="Enable debug printing")
-
-        args = parser.parse_args(argv)
-
-        prompt = " ".join(args.prompt)
-
+        status, prompt, meta = parse_cli_args(argv)
         self.prompt = prompt
-        self.flags = {"verbose": args.verbose, "debug": args.debug}
-        self.debug = args.debug
+        self.flags = meta["flags"]
+        self.debug = self.flags["debug"]
         return Status.OK, self.prompt
 
     @check_status
