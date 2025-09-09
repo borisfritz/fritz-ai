@@ -1,74 +1,85 @@
 import os
 import sys
+import argparse
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-from status import Status
-from debug import check_status, debug_status
-from utils import parse_cli_args
-
 from prompts import system_prompt
-from call_function import available_functions
+from call_function import available_functions, call_function
 
-load_dotenv()
+def parse_cli_args(argv):
+    parser = argparse.ArgumentParser(description="Generate content using Gemini API")
+    parser.add_argument("prompt", type=str, nargs='+', help="Prompt to send to the model (required)")
+    parser.add_argument("--verbose", action="store_true", help="Print token usage information")
+    parser.add_argument("--debug", action="store_true", help="Enable debug printing")
+    args = parser.parse_args(argv)
+    prompt = " ".join(args.prompt)
+    flags = {
+        "verbose": args.verbose,
+        "debug": args.debug,
+    }
+    return prompt, flags
 
-class GeminiCLI:
-    def __init__(self):
-        self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-        self.prompt = None
-        self.flags = {}
-        self.model = "gemini-2.0-flash-001"
-        self.debug = False
-        self.system_prompt = system_prompt
+def main():
+    load_dotenv()
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    prompt, flags = parse_cli_args(sys.argv[1:])
 
-    @check_status
-    @debug_status
-    def parse_args(self, argv):
-        status, prompt, meta = parse_cli_args(argv)
-        self.prompt = prompt
-        self.flags = meta["flags"]
-        self.debug = self.flags["debug"]
-        return status, self.prompt
+    verbose = False
+    if flags.get("verbose"):
+        verbose = True
+    if verbose:
+        print(f"User prompt: {prompt}")
 
-    @check_status
-    @debug_status
-    def get_response(self):
-        messages = [
-            types.Content(
-                role="user",
-                parts=[types.Part(text=self.prompt)]
-            )
-        ]
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=messages,
-            config=types.GenerateContentConfig(
-                tools=[available_functions],
-                system_instruction=self.system_prompt
-            ),
-        )
-        if response.candidates and response.candidates[0].content.parts:
-            return Status.OK, response
-        return Status.INVALID_RESPONSE, None
+    messages = [types.Content(role="user", parts=[types.Part(text=prompt)]),]
 
-    def run(self, argv):
-        self.parse_args(argv)
-        response = self.get_response()
-        if not response.function_calls:
-            print(response.text)
-        else:
-            for function_call_part in response.function_calls:
-                print(f"Calling function: {function_call_part.name}({function_call_part.args})")
+    for i in range(20):
+        try:
+            result = generate_content(client, messages, verbose)
+            if isinstance(result, str):
+                print(f"Final response:\n{result}")
+                break
+        except Exception as e:
+            print(f"Error: Failed on iteration {i}: {e}")
+    
+def generate_content(client, messages, verbose):
+    response = client.models.generate_content(
+        model="gemini-2.0-flash-001",
+        contents=messages,
+        config=types.GenerateContentConfig(
+            tools=[available_functions], system_instruction=system_prompt
+        ),
+    )
 
-        if self.flags.get("verbose"):
-            usage = getattr(response, "usage_metadata", None)
-            print(f"User prompt:\n{self.prompt}")
-            if usage:
-                print(f"Prompt tokens: {getattr(usage, "prompt_token_count", 0)}")
-                print(f"Response tokens: {getattr(usage, "candidates_token_count", 0)}")
+    for candidate in response.candidates:
+        messages.append(candidate.content)
+
+    if verbose:
+        print("Prompt tokens:", response.usage_metadata.prompt_token_count)
+        print("Response tokens:", response.usage_metadata.candidates_token_count)
+
+    if not response.function_calls:
+        return response.text
+
+    function_responses = []
+    for function_call_part in response.function_calls:
+        function_call_result = call_function(function_call_part, verbose)
+        if (
+            not function_call_result.parts
+            or not function_call_result.parts[0].function_response
+        ):
+            raise Exception("empty function call result")
+        if verbose:
+            print("---Response---")
+            print(f"-> {function_call_result.parts[0].function_response.response}")
+        function_responses.append(function_call_result.parts[0])
+    if not function_responses:
+        raise Exception("no function responses generated, exiting.")
+    messages.append(types.Content(role="user", parts=function_responses))
+    return None
 
 if __name__ == "__main__":
-    cli = GeminiCLI()
-    cli.run(sys.argv[1:])
+    main()
+
